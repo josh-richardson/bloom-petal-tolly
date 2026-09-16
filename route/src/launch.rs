@@ -123,8 +123,6 @@ pub fn launch_description(wallet: &str) -> DispatchResponse {
     petal::read_json_value(&json!({
         "schema": "tolly.launch-request.v1",
         "description": "Launch a token on TollyPad for this Bloom wallet: a fixed 1B supply minted into a permanently locked single-sided V3 pool (1% tier) quoted in USDC. One write stages at most one transaction (an exact USDC approve to the pad when dev_buy_usdc > 0 and the allowance is short, else createToken).",
-        "writes_enabled": policy::writes_enabled(),
-        "writes_setting": format!("{}={}", policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE),
         "write_semantics": trace::WRITE_SEMANTICS,
         "last_write": trace::last_write_json(wallet),
         "reconciled": side.reconciled,
@@ -216,16 +214,6 @@ fn refuse(
 
 fn advance(wallet: &str, intent: Intent, echo: Value, trace: &mut WriteTrace) -> DispatchResponse {
     let now = trace.now();
-    if !policy::writes_enabled() {
-        return petal::error(
-            -2,
-            format!(
-                "writes-disabled: set the runtime setting {}={} in Bloom to allow this Petal to stage transactions",
-                policy::WRITES_SETTING,
-                policy::WRITES_ENABLED_VALUE
-            ),
-        );
-    }
     let network = Network::current();
     trace.network(network);
     let address = match wallet_address(wallet) {
@@ -277,7 +265,7 @@ fn advance(wallet: &str, intent: Intent, echo: Value, trace: &mut WriteTrace) ->
             "operation-id-bound: operationId already bound to a different operation kind",
         );
     }
-    // See `swap::advance`: every write past the gates records the network.
+    // See `swap::advance`: every write past validation records the network.
     op.network = network.name().into();
     op.last_write_ms = Some(now);
     match ops::reconcile(&mut op, network, now) {

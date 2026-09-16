@@ -1,5 +1,5 @@
 // `GET {api}/health` projected, plus what this build is (network, chain,
-// constants digest, whether the owner enabled writes).
+// constants digest and contract-address drift checks).
 petal::route_file!(
     spec: petal::http_read_spec(5_000),
     read: |_ctx: &petal::Ctx| {
@@ -11,7 +11,6 @@ petal::route_file!(
         petal::read_json_value(&crate::api::status_document(
             network,
             &health,
-            crate::policy::writes_enabled(),
             crate::host::now_ms(),
         ))
     }

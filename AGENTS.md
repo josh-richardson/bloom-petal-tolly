@@ -57,7 +57,7 @@ a silent write as a staged transaction.
 
 | Path | Read | Write |
 |---|---|---|
-| `status.json` | API health, network, chain, `writes_enabled`, constants digest, `pad_matches_constants` | — |
+| `status.json` | API health, network, chain, constants digest, `pad_matches_constants` | — |
 | `markets.json` | TOLLY launches by 24h volume (50 rows); `degraded:true` means unknown, not empty | — |
 | `tokens/<address>.json` | identity, `provenance` (`pad`/`external`), `venues[]` with `execution` support, quote paths. Any lowercase address works, listed or not | — |
 | `quote/<address>/buy/<usdc>.json` | best-execution BUY quote at a USDC size (e.g. `25`, `0.5`) | — |
@@ -84,14 +84,10 @@ repeating this, and a staged record carries `cancel_hint`.
 
 ## Read before you write
 
-1. `status.json` — `writes_enabled` must be `true`; otherwise every write is
-   refused with `writes-disabled` and stages nothing (on the mount the
-   `write()` still succeeds; the refusal is in the operation record and in
-   the route file's `last_write`, see "Read after every write"). It is the
-   OWNER's runtime setting (`tolly_writes = "enabled"` under
-   `[petals.runtime.tolly.values]`), not a TOLLY-side switch. Also check
-   `pad_matches_constants` and `network`, which is always `prod` (the
-   public production API on Arc mainnet).
+1. `status.json` — check `pad_matches_constants` and `network`, which is
+   always `prod` (the public production API on Arc mainnet). A degraded API
+   health projection is informational and does not independently disable
+   transaction staging.
 2. `tokens/<address>.json` — look at `provenance` and each venue's
    `execution`. Day-1 executes Uniswap V3 pools (pad tokens through
    SwapRouter02, external tokens through the TOLLY multi router) and V2 pairs
@@ -159,10 +155,10 @@ says that, and only from host and chain evidence.
 
 `operationId` is the idempotency key. It is bound to the economic tuple
 (buy: token + amount; sell: token + amount; launch: name + symbol + meta + dev
-buy) by the first write that gets past validation and the gates. Re-POSTing
+buy) by the first write that gets past validation. Re-POSTing
 a bound id with a different tuple is refused (`operation-id-bound`): the
 record is left untouched and only `last_write` reports it; use a new id. A
-record created by a refused write (e.g. `writes-disabled`, an invalid
+record created by a refused write (e.g. an invalid
 amount) is UNBOUND (`request_sha256: ""`) until a write past validation
 binds it, so a corrected re-POST may keep its `operationId`. Execution
 parameters (`slippage_bps`, `venue`, `min_out_raw`, `allow_worse_venue`) may
@@ -219,7 +215,7 @@ not returned on the mount:
   amount): nothing is protected, so the stale error is replaced;
 - no record for that `operationId` yet: one is created, `failed`, unbound.
   Its `network` is `prod`, the only network; the first write past the
-  gates binds it.
+  validation binds it.
 
 Refusals that cannot reach a record (body did not parse, invalid
 `operationId`, id bound to a different request or kind, wallet address
@@ -288,8 +284,7 @@ cannot regress the record to `unknown`.
   Re-POST: the Petal re-quotes and re-stages the same step; the old attempt
   stays in `txs[]` as `superseded`.
 - Recorded refusals with `retryable: true` — re-POST only after fixing what
-  the message names: `writes-disabled` (the owner sets
-  `tolly_writes = "enabled"`), `live-entry-conflict`
+  the message names: `live-entry-conflict`
   (another operation for the same (wallet, kind, token) still has a pending
   or unrecorded outbox entry; wait for or cancel it), `invalid-request`
   (the body failed validation; re-POST a corrected body, the id stays usable
@@ -374,12 +369,12 @@ most 1000 records per wallet (`scan_truncated: true` in `recent` /
 
 ## Errors
 
-`-1` not found (unknown token / operation), `-2` denied (writes disabled,
-host/policy denial, live-entry conflict, unrecorded stage),
+`-1` not found (unknown token / operation), `-2` denied (host/policy denial,
+live-entry conflict, unrecorded stage),
 `-3` invalid input (bad body, cap, bound id, venue rules, funds), `-4` backend
 (API/chain failure, pre-flight revert, fee mismatch, a stage whose record
 could not be written). Every message starts with its code
-(`writes-disabled: …`), and the same code lands in the record's `error` or
+and the same code lands in the record's `error` or
 `refusals[]` and in `last_write`. Messages are sanitized; they never carry
 RPC URLs or keys.
 

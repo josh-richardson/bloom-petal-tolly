@@ -29,10 +29,11 @@ pub fn check_wallet_id(wallet: &str) -> Result<(), DispatchResponse> {
     Ok(())
 }
 
-/// The wallet's checksummed owner/signer address, read from the host VFS
-/// (`wallets/<wallet>/address`, relative to the Bloom mount root).
+/// The wallet's account-0 EVM owner/signer address, read from Bloom's
+/// canonical account-scoped host VFS path
+/// (`wallets/<wallet>/0/address.evm`, relative to the Bloom mount root).
 pub fn wallet_address(wallet: &str) -> Result<Address, String> {
-    let bytes = host::vfs_read(&format!("wallets/{wallet}/address"), 128)
+    let bytes = host::vfs_read(&format!("wallets/{wallet}/0/address.evm"), 128)
         .map_err(|e| format!("wallet address: {}", sanitize_host_error(&e.message())))?;
     let value = std::str::from_utf8(&bytes)
         .map_err(|_| "wallet address is not UTF-8")?
@@ -45,6 +46,7 @@ pub fn wallet_address(wallet: &str) -> Result<Address, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fake_host::{self, FakeHost};
 
     #[test]
     fn wallet_ids_are_single_segments() {
@@ -58,5 +60,32 @@ mod tests {
         assert!(check_wallet_id("Main").is_err());
         assert!(check_wallet_id("").is_err());
         assert!(check_wallet_id(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn wallet_address_uses_canonical_account_scoped_evm_path() {
+        let expected: Address = "0x1111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+        let mut host = FakeHost::new(0);
+        host.seed_vfs(
+            "wallets/main/0/address.evm",
+            b"0x1111111111111111111111111111111111111111\n",
+        );
+        fake_host::install(host);
+
+        assert_eq!(wallet_address("main").unwrap(), expected);
+    }
+
+    #[test]
+    fn wallet_address_does_not_fall_back_to_removed_wallet_root_path() {
+        let mut host = FakeHost::new(0);
+        host.seed_vfs(
+            "wallets/main/address",
+            b"0x1111111111111111111111111111111111111111\n",
+        );
+        fake_host::install(host);
+
+        assert!(wallet_address("main").is_err());
     }
 }
