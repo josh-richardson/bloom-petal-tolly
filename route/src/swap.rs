@@ -231,8 +231,6 @@ pub fn buy_description(wallet: &str) -> DispatchResponse {
     petal::read_json_value(&json!({
         "schema": "tolly.buy-request.v1",
         "description": "Stage a USDC -> token buy for this Bloom wallet. One write stages at most one transaction (an exact USDC approve when the allowance is short, else the swap); after a write read this file (last_write, reconciled), then operations/<operationId>.json and follow next_action.",
-        "writes_enabled": policy::writes_enabled(),
-        "writes_setting": format!("{}={}", policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE),
         "write_semantics": trace::WRITE_SEMANTICS,
         "last_write": trace::last_write_json(wallet),
         "reconciled": side.reconciled,
@@ -262,8 +260,6 @@ pub fn sell_description(wallet: &str) -> DispatchResponse {
     petal::read_json_value(&json!({
         "schema": "tolly.sell-request.v1",
         "description": "Stage a token -> USDC sell for this Bloom wallet. One write stages at most one transaction (an exact token approve when the allowance is short, else the swap); no interface fee applies to sells. After a write read this file (last_write, reconciled), then operations/<operationId>.json.",
-        "writes_enabled": policy::writes_enabled(),
-        "writes_setting": format!("{}={}", policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE),
         "write_semantics": trace::WRITE_SEMANTICS,
         "last_write": trace::last_write_json(wallet),
         "reconciled": side.reconciled,
@@ -346,16 +342,6 @@ fn venue_plan(v: &VenueQuote) -> Value {
 
 fn advance(wallet: &str, intent: Intent, echo: Value, trace: &mut WriteTrace) -> DispatchResponse {
     let now = trace.now();
-    if !policy::writes_enabled() {
-        return petal::error(
-            -2,
-            format!(
-                "writes-disabled: set the runtime setting {}={} in Bloom to allow this Petal to stage transactions",
-                policy::WRITES_SETTING,
-                policy::WRITES_ENABLED_VALUE
-            ),
-        );
-    }
     let network = Network::current();
     trace.network(network);
     let kind = match intent.side {
@@ -450,7 +436,7 @@ fn advance(wallet: &str, intent: Intent, echo: Value, trace: &mut WriteTrace) ->
             "operation-id-bound: operationId already bound to a different operation kind",
         );
     }
-    // Every write past the gates records the network it ran on.
+    // Every write past validation records the network it ran on.
     op.network = network.name().into();
     op.last_write_ms = Some(now);
 
