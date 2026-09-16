@@ -259,7 +259,8 @@ No test contacts a network or a Bloom daemon.
   parsed or not. Agents read the marker first (`body_sha256`,
   `record_effect`), then the record it names. The route response is
   unchanged; the successful path stages exactly as before.
-- **D7** Wallet address via `vfs_read("wallets/{wallet}/address")`.
+- **D7** Wallet address via Bloom's canonical account-scoped EVM identity,
+  `vfs_read("wallets/{wallet}/0/address.evm")`.
 - **D8** No logo pinning; the agent supplies a pinned `imageURI`.
 - **D9** `max_fee_per_gas` / `max_priority_fee_per_gas` left `None` (the
   TxEngine sets fees and estimates gas); the `eth_call{from}` pre-flight is

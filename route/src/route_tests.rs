@@ -172,7 +172,7 @@ fn host_for_barc_buy() -> FakeHost {
     let mut host = FakeHost::new(NOW);
     host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         b"0xAAaAaAaaAaAaaaaAaAAaAaaAaAAAAaAAAAAAAAAA\n",
     );
     host.reply_http(HEALTH_URL, 200, &health());
@@ -1619,7 +1619,7 @@ fn insufficient_funds_is_a_retryable_refusal() {
     let mut host = FakeHost::new(NOW);
     host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(BARC_URL, 200, &barc_detail());
@@ -2227,7 +2227,7 @@ fn pad_token_buy_goes_straight_to_swap_router02_without_a_fee() {
     let mut host = FakeHost::new(NOW);
     host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(CALENDAR_URL, 200, &calendar_detail());
@@ -2301,7 +2301,7 @@ fn host_for_barc_sell(balance: u128) -> FakeHost {
     let mut host = FakeHost::new(NOW);
     host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(BARC_URL, 200, &barc_detail());
@@ -2415,7 +2415,7 @@ fn host_for_launch() -> FakeHost {
     let mut host = FakeHost::new(NOW);
     host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.balance(wallet_address(), u(100_000_000_000_000_000_000));
@@ -2881,7 +2881,7 @@ fn v2_venue_buys_route_through_swap_with_toll_v2_with_a_non_zero_floor() {
     let mut host = FakeHost::new(NOW);
     host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(&ApiRoute::Token(token).url(Network::Prod), 200, &detail);
