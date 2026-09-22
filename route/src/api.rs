@@ -197,12 +197,7 @@ pub fn parse_health(value: &Value) -> Health {
 }
 
 /// `status.json`: `/health` projected plus what this build is.
-pub fn status_document(
-    network: Network,
-    health: &Value,
-    writes_enabled: bool,
-    now_ms: u64,
-) -> Value {
+pub fn status_document(network: Network, health: &Value, now_ms: u64) -> Value {
     let parsed = parse_health(health);
     let indexing = &parsed.indexing;
     json!({
@@ -213,7 +208,6 @@ pub fn status_document(
         "api_base": network.api_base(),
         "chain": CHAIN,
         "chain_id": CHAIN_ID,
-        "writes_enabled": writes_enabled,
         "max_op_usdc": MAX_OP_USDC_HUMAN,
         "interface_fee_bps": INTERFACE_FEE_BPS,
         "api": {
@@ -854,7 +848,7 @@ mod tests {
     fn prod_fixtures_parse() {
         let health: Value =
             serde_json::from_str(include_str!("../tests/fixtures/prod-health.json")).unwrap();
-        let doc = status_document(Network::Prod, &health, false, 5);
+        let doc = status_document(Network::Prod, &health, 5);
         assert_eq!(doc["network"], "prod");
         assert_eq!(doc["api_base"], "https://api.tollylabs.com");
         assert_eq!(doc["status"], "ok");
@@ -1071,19 +1065,18 @@ mod tests {
     fn status_projection_flags_pad_drift() {
         let health: Value =
             serde_json::from_str(include_str!("../tests/fixtures/prod-health.json")).unwrap();
-        let doc = status_document(Network::Prod, &health, false, 5);
+        let doc = status_document(Network::Prod, &health, 5);
         assert_eq!(doc["status"], "ok");
         assert_eq!(doc["pad_matches_constants"], true);
         assert_eq!(doc["chain_id_matches_constants"], true);
-        assert_eq!(doc["writes_enabled"], false);
         assert_eq!(doc["api"]["indexing"]["state"], "live");
         let drifted = json!({ "ok": true, "chainId": 5042, "pad": "0x0000000000000000000000000000000000000001" });
         assert_eq!(
-            status_document(Network::Prod, &drifted, true, 5)["pad_matches_constants"],
+            status_document(Network::Prod, &drifted, 5)["pad_matches_constants"],
             false
         );
         assert_eq!(
-            status_document(Network::Prod, &json!({"ok": false}), true, 5)["status"],
+            status_document(Network::Prod, &json!({"ok": false}), 5)["status"],
             "degraded"
         );
     }

@@ -170,9 +170,8 @@ const V4_OUT: u128 = 1_300_000_000_000_000_000_000; // 1300 BARC (best, unsuppor
 /// 25 USDC across the three venues.
 fn host_for_barc_buy() -> FakeHost {
     let mut host = FakeHost::new(NOW);
-    host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         b"0xAAaAaAaaAaAaaaaAaAAaAaaAaAAAAaAAAAAAAAAA\n",
     );
     host.reply_http(HEALTH_URL, 200, &health());
@@ -249,15 +248,14 @@ fn buy_body(id: &str, amount: &str, extra: Value) -> Vec<u8> {
 // ---- reads ----
 
 #[test]
-fn status_projects_health_and_write_gate() {
+fn status_projects_health() {
     fake_host::install(host_for_barc_buy());
     let health = fetch_json(Network::Prod, &ApiRoute::Health).unwrap();
-    let doc = status_document(Network::Prod, &health, policy::writes_enabled(), NOW);
+    let doc = status_document(Network::Prod, &health, NOW);
     assert_eq!(doc["schema"], "tolly.status.v1");
     assert_eq!(doc["network"], "prod");
     assert_eq!(doc["api_base"], "https://api.tollylabs.com");
     assert_eq!(doc["chain_id"], 5042);
-    assert_eq!(doc["writes_enabled"], true);
     assert_eq!(doc["pad_matches_constants"], true);
     fake_host::with(|h| assert_eq!(h.http_calls[0].url, HEALTH_URL));
 }
@@ -468,91 +466,6 @@ fn sell_quote_normalises_native_v4_output_to_six_decimals() {
 // ---- buy walk ----
 
 #[test]
-fn writes_are_denied_until_the_owner_enables_them() {
-    let mut host = host_for_barc_buy();
-    host.set_setting(policy::WRITES_SETTING, "no");
-    fake_host::install(host);
-    let body = buy_body("buy-1", "25", json!({}));
-    let r = route_buy(WALLET, &body);
-    assert_eq!(code(&r), -2, "{}", message(&r));
-    assert!(message(&r).contains("writes-disabled"));
-    fake_host::with(|h| {
-        assert!(h.staged.is_empty());
-        assert!(h.http_calls.is_empty(), "no upstream call before the gate");
-    });
-    // On the mount the -2 never reaches the writer: the refusal is readable.
-    let rec = record("buy-1");
-    assert_eq!(rec["status"], "failed");
-    assert_eq!(rec["error"]["code"], "writes-disabled");
-    assert_eq!(rec["error"]["retryable"], true);
-    assert_eq!(rec["next_action"], "retry");
-    assert_eq!(rec["last_write_ms"], NOW);
-    assert_eq!(rec["kind"], "buy");
-    assert_eq!(rec["network"], "prod");
-    assert_eq!(rec["wallet_address"], addr_hex(wallet_address()));
-    assert_eq!(rec["request"]["operationId"], "buy-1");
-    assert_eq!(rec["txs"], json!([]));
-    assert_eq!(rec["refusals"], json!([]));
-    assert_eq!(rec["request_sha256"], "", "a refusal never binds");
-    let lw = last_write();
-    assert_eq!(lw["schema"], "tolly.lastwrite.v1");
-    assert_eq!(lw["route"], "buy");
-    assert_eq!(lw["outcome"], "refused");
-    assert_eq!(lw["response_code"], -2);
-    assert_eq!(lw["operationId"], "buy-1");
-    assert_eq!(lw["error"]["code"], "writes-disabled");
-    assert_eq!(lw["record"], "operations/buy-1.json");
-    assert_eq!(lw["record_effect"], "created");
-    assert_eq!(lw["body_sha256"], ops::sha256_hex(&body));
-    assert_eq!(lw["ts_ms"], NOW);
-    // The read side of buy.json explains it too.
-    let doc = read_json(buy_description(WALLET));
-    assert_eq!(doc["writes_enabled"], false);
-    assert_eq!(doc["last_write"]["error"]["code"], "writes-disabled");
-    assert_eq!(doc["recent"]["operations"][0]["id"], "buy-1");
-    assert_eq!(
-        doc["recent"]["operations"][0]["error_code"],
-        "writes-disabled"
-    );
-    assert!(
-        doc["write_semantics"]
-            .as_str()
-            .unwrap()
-            .contains("asynchronously")
-    );
-
-    // Enabled: the same operationId proceeds (the refusal record was unbound
-    // and is bound by this first write past the gates) and stages.
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
-        h.now_ms = NOW + 1;
-    });
-    let r = route_buy(
-        WALLET,
-        &buy_body("buy-1", "25", json!({"allow_worse_venue": true})),
-    );
-    assert_eq!(r, DispatchResponse::Write, "{}", message(&r));
-    let rec = record("buy-1");
-    assert_eq!(rec["status"], "staged");
-    assert_eq!(rec["error"], Value::Null);
-    assert_eq!(rec["last_write_ms"], NOW + 1);
-    assert_eq!(rec["created_ms"], NOW, "the refusal claimed the id");
-    assert_eq!(
-        rec["request_sha256"].as_str().unwrap().len(),
-        64,
-        "bound now"
-    );
-    let lw = last_write();
-    assert_eq!(lw["outcome"], "accepted");
-    assert_eq!(lw["response_code"], 0);
-    assert_eq!(lw["record_effect"], "accepted");
-    assert_eq!(lw["error"], Value::Null);
-    fake_host::with(|h| assert_eq!(h.staged.len(), 1));
-}
-
-// ---- write traces (every write leaves a readable trace) ----
-
-#[test]
 fn invalid_bodies_leave_a_marker_but_no_record() {
     fake_host::install(host_for_barc_buy());
     let r = route_buy(WALLET, b"not json");
@@ -668,64 +581,6 @@ fn a_parsed_refusal_before_the_tuple_is_known_creates_an_unbound_record() {
 }
 
 #[test]
-fn refusals_on_a_live_record_are_appended_and_keep_its_status() {
-    fake_host::install(host_for_barc_buy());
-    let body = buy_body("buy-p", "25", json!({"allow_worse_venue": true}));
-    assert_eq!(route_buy(WALLET, &body), DispatchResponse::Write);
-    assert_eq!(record("buy-p")["status"], "staged");
-    // Writes get disabled while the entry is pending: the re-POST is refused
-    // but the staged truth stays; the refusal is visible on the record.
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, "no");
-        h.now_ms = NOW + 5;
-    });
-    let r = route_buy(WALLET, &body);
-    assert_eq!(code(&r), -2, "{}", message(&r));
-    let rec = record("buy-p");
-    assert_eq!(rec["status"], "staged");
-    assert_eq!(rec["next_action"], "confirm_in_bloom");
-    assert_eq!(rec["error"], Value::Null);
-    assert!(!rec["confirm_path"].as_str().unwrap().is_empty());
-    assert_eq!(rec["refusals"].as_array().unwrap().len(), 1);
-    assert_eq!(rec["refusals"][0]["code"], "writes-disabled");
-    assert_eq!(rec["refusals"][0]["response_code"], -2);
-    assert_eq!(rec["refusals"][0]["ts_ms"], NOW + 5);
-    assert_eq!(rec["last_write_ms"], NOW + 5);
-    assert_eq!(rec["updated_ms"], NOW + 5);
-    assert_eq!(last_write()["record_effect"], "refusal_appended");
-    assert_eq!(last_write()["record"], "operations/buy-p.json");
-    // The list is bounded to the newest MAX_REFUSALS.
-    for i in 0..(ops::MAX_REFUSALS + 3) {
-        fake_host::with(|h| h.now_ms = NOW + 10 + i as u64);
-        assert_eq!(code(&route_buy(WALLET, &body)), -2);
-    }
-    let rec = record("buy-p");
-    let refusals = rec["refusals"].as_array().unwrap();
-    assert_eq!(refusals.len(), ops::MAX_REFUSALS);
-    assert_eq!(
-        refusals.last().unwrap()["ts_ms"],
-        NOW + 10 + ops::MAX_REFUSALS as u64 + 2,
-        "newest kept"
-    );
-    assert_eq!(rec["status"], "staged");
-    // A terminal failure is protected the same way.
-    let mut host = host_for_barc_buy();
-    host.fail_next_stage(SdkError::Host(HostStatus::Denied));
-    fake_host::install(host);
-    let body = buy_body("buy-t", "25", json!({"allow_worse_venue": true}));
-    assert_eq!(code(&route_buy(WALLET, &body)), -2);
-    assert_eq!(record("buy-t")["error"]["code"], "policy-denied");
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, "no");
-    });
-    assert_eq!(code(&route_buy(WALLET, &body)), -2);
-    let rec = record("buy-t");
-    assert_eq!(rec["error"]["code"], "policy-denied", "terminal error kept");
-    assert_eq!(rec["next_action"], "none");
-    assert_eq!(rec["refusals"][0]["code"], "writes-disabled");
-}
-
-#[test]
 fn unrecorded_stage_refusals_are_appended_and_conflicts_create_records() {
     let mut host = host_for_barc_buy();
     host.fail_store_after = Some(3);
@@ -827,7 +682,7 @@ fn a_validation_refusal_with_a_known_tuple_does_not_bind_the_id() {
     assert_eq!(rec["error"]["code"], "invalid-request");
     assert_eq!(rec["next_action"], "retry");
     assert_eq!(rec["request_sha256"], "", "a refusal never binds");
-    // A cap refusal (past validation, before the gates) does not bind either.
+    // A cap refusal does not bind either.
     assert_eq!(
         code(&route_buy(WALLET, &buy_body("buy-v", "300", json!({})))),
         -3
@@ -849,144 +704,6 @@ fn a_validation_refusal_with_a_known_tuple_does_not_bind_the_id() {
     assert_eq!(rec["request_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(last_write()["record_effect"], "accepted");
     fake_host::with(|h| assert_eq!(h.staged.len(), 1));
-}
-
-#[test]
-fn a_sell_refused_before_its_decimals_were_planned_still_lands_on_the_record() {
-    // Balance below the amount: the flow records `insufficient-funds`
-    // (bound) before `plan.decimals` is set.
-    fake_host::install(host_for_barc_sell(1_000_000_000_000_000_000));
-    let body = serde_json::to_vec(
-        &json!({ "operationId": "sell-e", "token": addr_hex(barc()), "amount": "5000" }),
-    )
-    .unwrap();
-    assert_eq!(code(&route_sell(WALLET, &body)), -3);
-    let rec = record("sell-e");
-    assert_eq!(rec["error"]["code"], "insufficient-funds");
-    assert_eq!(rec["request_sha256"].as_str().unwrap().len(), 64);
-    assert_eq!(rec["plan"]["decimals"], Value::Null);
-    assert_eq!(rec["txs"], json!([]));
-    // A gate refusal cannot compute the tuple here, but nothing is staged:
-    // the refusal replaces the stale error instead of hiding in the marker.
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, "no");
-        h.now_ms = NOW + 3;
-    });
-    assert_eq!(code(&route_sell(WALLET, &body)), -2);
-    let rec = record("sell-e");
-    assert_eq!(rec["status"], "failed");
-    assert_eq!(rec["error"]["code"], "writes-disabled");
-    assert_eq!(rec["last_write_ms"], NOW + 3);
-    assert_eq!(last_write()["record_effect"], "failed");
-}
-
-#[test]
-fn sell_refusals_match_the_record_through_its_planned_decimals() {
-    fake_host::install(host_for_barc_sell(5_000_000_000_000_000_000_000));
-    // A decimal sell amount needs the token decimals for its tuple; before
-    // any plan exists the refusal record is unbound.
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, "no");
-    });
-    let body = serde_json::to_vec(
-        &json!({ "operationId": "sell-1", "token": addr_hex(barc()), "amount": "5000" }),
-    )
-    .unwrap();
-    assert_eq!(code(&route_sell(WALLET, &body)), -2);
-    let rec = record("sell-1");
-    assert_eq!(rec["kind"], "sell");
-    assert_eq!(rec["error"]["code"], "writes-disabled");
-    assert_eq!(rec["request_sha256"], "");
-    // Enabled: binds and stages (an approve of the token).
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
-    });
-    let r = route_sell(WALLET, &body);
-    assert_eq!(r, DispatchResponse::Write, "{}", message(&r));
-    assert_eq!(record("sell-1")["status"], "staged");
-    assert_eq!(record("sell-1")["plan"]["decimals"], 18);
-    // Disabled again: the planned decimals let the trace verify ownership,
-    // so the refusal lands on the record.
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, "no");
-    });
-    assert_eq!(code(&route_sell(WALLET, &body)), -2);
-    let rec = record("sell-1");
-    assert_eq!(rec["status"], "staged");
-    assert_eq!(rec["refusals"][0]["code"], "writes-disabled");
-    assert_eq!(last_write()["record_effect"], "refusal_appended");
-    // A different amount is foreign.
-    let other = serde_json::to_vec(
-        &json!({ "operationId": "sell-1", "token": addr_hex(barc()), "amount": "999" }),
-    )
-    .unwrap();
-    assert_eq!(code(&route_sell(WALLET, &other)), -2);
-    assert_eq!(record("sell-1")["refusals"].as_array().unwrap().len(), 1);
-    assert_eq!(last_write()["record_effect"], "none");
-}
-
-#[test]
-fn launch_refusals_are_recorded_unbound_and_bound_by_the_first_stage() {
-    let mut host = host_for_launch();
-    host.set_setting(policy::WRITES_SETTING, "no");
-    fake_host::install(host);
-    assert_eq!(
-        code(&route_launch(WALLET, &launch_body("launch-r", "0"))),
-        -2
-    );
-    let rec = record("launch-r");
-    assert_eq!(rec["kind"], "launch");
-    assert_eq!(rec["status"], "failed");
-    assert_eq!(rec["error"]["code"], "writes-disabled");
-    assert_eq!(
-        rec["request_sha256"], "",
-        "the launch tuple is known offline, but a refusal never binds"
-    );
-    assert_eq!(last_write()["route"], "launch");
-    // A different launch under the same id is not foreign yet: the refusal
-    // lands on the unbound record.
-    let mut other: Value = serde_json::from_slice(&launch_body("launch-r", "0")).unwrap();
-    other["symbol"] = json!("OTHER");
-    fake_host::with(|h| h.now_ms = NOW + 1);
-    assert_eq!(
-        code(&route_launch(WALLET, &serde_json::to_vec(&other).unwrap())),
-        -2
-    );
-    let rec = record("launch-r");
-    assert_eq!(rec["error"]["code"], "writes-disabled");
-    assert_eq!(rec["last_write_ms"], NOW + 1);
-    assert_eq!(rec["request_sha256"], "");
-    assert_eq!(last_write()["record_effect"], "failed");
-    // Enabled: the first stage binds.
-    fake_host::with(|h| {
-        h.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
-        h.now_ms = NOW + 2;
-    });
-    let r = route_launch(WALLET, &launch_body("launch-r", "0"));
-    assert_eq!(r, DispatchResponse::Write, "{}", message(&r));
-    let rec = record("launch-r");
-    assert_eq!(rec["status"], "staged");
-    assert_eq!(rec["network"], "prod");
-    let bound = rec["request_sha256"].as_str().unwrap().to_owned();
-    assert_eq!(bound.len(), 64);
-    // Now the other launch is foreign: refused, record untouched.
-    fake_host::with(|h| h.now_ms = NOW + 3);
-    assert_eq!(
-        code(&route_launch(WALLET, &serde_json::to_vec(&other).unwrap())),
-        -3
-    );
-    let rec = record("launch-r");
-    assert_eq!(rec["status"], "staged");
-    assert_eq!(rec["request_sha256"], bound);
-    assert_eq!(rec["last_write_ms"], NOW + 2);
-    assert_eq!(last_write()["error"]["code"], "operation-id-bound");
-    assert_eq!(last_write()["record_effect"], "none");
-    assert_eq!(record("launch-r")["status"], "staged");
-    let doc = read_json(crate::launch::launch_description(WALLET));
-    assert_eq!(doc["last_write"]["outcome"], "refused");
-    assert_eq!(doc["last_write"]["error"]["code"], "operation-id-bound");
-    assert_eq!(doc["recent"]["operations"][0]["id"], "launch-r");
-    assert_eq!(doc["recent"]["operations"][0]["status"], "staged");
 }
 
 #[test]
@@ -1617,9 +1334,8 @@ fn insufficient_funds_is_a_retryable_refusal() {
     host.balance(wallet_address(), u(1)); // later rule for the same address wins? no: first match wins, so rebuild
     let _ = host;
     let mut host = FakeHost::new(NOW);
-    host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(BARC_URL, 200, &barc_detail());
@@ -1967,7 +1683,7 @@ fn unknown_outbox_entries_never_regress_or_restage() {
 }
 
 #[test]
-fn buy_description_lists_recent_operations_and_the_gate() {
+fn buy_description_lists_recent_operations() {
     fake_host::install(host_for_barc_buy());
     assert_eq!(
         route_buy(
@@ -1977,7 +1693,6 @@ fn buy_description_lists_recent_operations_and_the_gate() {
         DispatchResponse::Write
     );
     let doc = read_json(buy_description(WALLET));
-    assert_eq!(doc["writes_enabled"], true);
     assert_eq!(doc["limits"]["max_op_usdc"], "250");
     assert_eq!(doc["recent"]["operations"][0]["id"], "buy-d");
     assert_eq!(doc["recent"]["operations"][0]["status"], "staged");
@@ -2225,9 +1940,8 @@ fn reconciliation_is_bounded_to_the_newest_in_flight_operations() {
 #[test]
 fn pad_token_buy_goes_straight_to_swap_router02_without_a_fee() {
     let mut host = FakeHost::new(NOW);
-    host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(CALENDAR_URL, 200, &calendar_detail());
@@ -2299,9 +2013,8 @@ fn pad_token_buy_goes_straight_to_swap_router02_without_a_fee() {
 
 fn host_for_barc_sell(balance: u128) -> FakeHost {
     let mut host = FakeHost::new(NOW);
-    host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(BARC_URL, 200, &barc_detail());
@@ -2413,9 +2126,8 @@ fn sell_amount_uses_the_token_decimals_and_rejects_dust() {
 
 fn host_for_launch() -> FakeHost {
     let mut host = FakeHost::new(NOW);
-    host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.balance(wallet_address(), u(100_000_000_000_000_000_000));
@@ -2879,9 +2591,8 @@ fn v2_venue_buys_route_through_swap_with_toll_v2_with_a_non_zero_floor() {
         "quoteDecimals": 6
     });
     let mut host = FakeHost::new(NOW);
-    host.set_setting(policy::WRITES_SETTING, policy::WRITES_ENABLED_VALUE);
     host.seed_vfs(
-        &format!("wallets/{WALLET}/address"),
+        &format!("wallets/{WALLET}/0/address.evm"),
         addr_hex(wallet_address()).as_bytes(),
     );
     host.reply_http(&ApiRoute::Token(token).url(Network::Prod), 200, &detail);

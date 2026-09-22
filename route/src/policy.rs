@@ -1,10 +1,6 @@
-//! Day-1 limits and the write gate. These are the founder-controlled compiled
-//! defaults (DESIGN D4-D6, critique M7/M12); `tolly_writes` is the USER's
-//! runtime setting, not a founder gate.
+//! Day-1 transaction limits and validation policy.
 
 use alloy_primitives::U256;
-
-use crate::host;
 
 /// Largest single operation, in 6-decimal USDC raw units (250 USDC). Applies
 /// to the USDC spent on a buy, and to the QUOTED USDC output of a sell.
@@ -52,11 +48,6 @@ pub const OPS_SCAN_MAX_OPS: usize = 1_000;
 /// (`reconciled[]`, newest first); more report `reconcile_truncated: true`.
 pub const RECONCILE_MAX_OPS: usize = 8;
 
-/// Runtime setting that enables writes. Lives in the user's
-/// `[petals.runtime.tolly.values]`; any Bloom user can flip it.
-pub const WRITES_SETTING: &str = "tolly_writes";
-pub const WRITES_ENABLED_VALUE: &str = "enabled";
-
 pub fn max_op_usdc_raw() -> U256 {
     U256::from(MAX_OP_USDC_RAW)
 }
@@ -67,14 +58,6 @@ pub fn max_dev_buy_usdc_raw() -> U256 {
 
 pub fn gas_reserve_wei() -> U256 {
     U256::from(GAS_RESERVE_WEI)
-}
-
-/// Whether the owner has enabled live writes for this Petal.
-pub fn writes_enabled() -> bool {
-    matches!(
-        host::runtime_setting(WRITES_SETTING),
-        Ok(Some(value)) if value.trim() == WRITES_ENABLED_VALUE
-    )
 }
 
 /// Validate a slippage tolerance, applying the default when absent.

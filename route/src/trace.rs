@@ -390,7 +390,7 @@ impl WriteTrace {
         // A refusal never binds, even when the tuple is known offline: there
         // is nothing staged to protect, and binding would make the only
         // remedy (a corrected body under the same id) `operation-id-bound`.
-        // The first write past validation and the gates binds the record.
+        // The first write past validation binds the record.
         let network = self
             .network
             .clone()
@@ -433,7 +433,6 @@ impl WriteTrace {
 /// the write-time refusal vocabulary; the second mirrors the flows' own
 /// `record_failure` codes so a refusal classified here agrees with them.
 const CODES: &[(&str, bool)] = &[
-    ("writes-disabled", true),
     ("live-entry-conflict", true),
     ("unrecorded-stage", false),
     ("invalid-request", true),
@@ -512,10 +511,6 @@ mod tests {
 
     #[test]
     fn classify_uses_the_prefix_and_falls_back_on_the_response_code() {
-        let e = classify(-2, "writes-disabled: set the runtime setting");
-        assert_eq!(e.code, "writes-disabled");
-        assert_eq!(e.message, "set the runtime setting");
-        assert!(e.retryable);
         let e = classify(-3, "operationId already bound to a different request");
         assert_eq!(e.code, "invalid-request");
         let e = classify(-3, "operation-id-bound: operationId already bound");

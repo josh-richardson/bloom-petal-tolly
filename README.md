@@ -37,20 +37,7 @@ cat ~/bloom/petals/tolly/status.json     # network "prod", api_base "https://api
 cat ~/bloom/petals/tolly/markets.json
 ```
 
-**2. Enable writes** (reads work without this; every buy/sell/launch is
-refused with `writes-disabled` until the owner opts in). In
-`~/.bloom/config.toml`:
-
-```toml
-[petals.runtime.tolly.values]
-tolly_writes = "enabled"
-```
-
-then restart the Bloom Machine service (`systemctl --user restart
-bloom-machine.service` on a systemd install) and confirm
-`status.json` shows `"writes_enabled": true`.
-
-**3. Find the installed package hash.** Bloom identifies a Petal build by
+**2. Find the installed package hash.** Bloom identifies a Petal build by
 its package hash; a fresh wallet policy allows no Petal packages and no
 destinations, so a staged entry cannot be confirmed until the owner
 allows both.
@@ -63,7 +50,7 @@ The release notes carry the archive's `package_hash` from `petal package`
 for cross-checking; the hash Bloom reports for the INSTALLED package is the
 one that counts.
 
-**4. Update the wallet policy** (destinations + package). Start from the
+**3. Update the wallet policy** (destinations + package). Start from the
 current policy (`cat ~/bloom/wallets/main/policy.json`) and set exactly
 these fields, keeping anything else Bloom already put there:
 
@@ -102,7 +89,7 @@ AGENTS.md). Without it, confirming a staged entry fails with
 `POLICY_APPROVAL_REQUIRED` and Bloom auto-stages a packages-only policy
 update of its own.
 
-**5. Trade.** The agent writes a body to `wallets/main/buy.json` (or
+**4. Trade.** The agent writes a body to `wallets/main/buy.json` (or
 `sell.json`, `launch.json`) and reads the same file back (AGENTS.md "Read
 after every write"). Each accepted write stages ONE transaction in the
 outbox; the owner confirms it per transaction with the passkey:
@@ -128,7 +115,7 @@ petal-build.toml         route build config; SDK pinned by full commit SHA; no e
 route/Cargo.toml         shared route crate (same SDK pin)
 route/src/
   constants.rs           GENERATED from the frontend sources (scripts/gen-constants.mjs)
-  policy.rs              day-1 limits and the write gate
+  policy.rs              day-1 transaction limits
   abi.rs amount.rs fee.rs           pure encoders and arithmetic
   api.rs                 fixed API targets (the production host) + projections (venuesForToken port)
   chain.rs               the four allowlisted bloom:chain reads
@@ -195,9 +182,8 @@ Expected route count: 21.
   `markets.json` and `tokens/<address>.json`.
 - Route flows against the fake host (`route/src/route_tests.rs`): status,
   markets, token detail, buy/sell quotes (V4 best but unsupported, QuoterV2
-  revert, sell normalisation), the buy walk (writes disabled → -2 and a
-  `failed/writes-disabled` record plus `last_write`, cap → -3,
-  approve-then-swap with gross `swapWithToll` and a fresh floor, bound-id
+  revert, sell normalisation), the buy walk (cap → -3, approve-then-swap
+  with gross `swapWithToll` and a fresh floor, bound-id
   mismatch → -3, venue pin rules, stage denial and error classification,
   persist failure after stage → `stage_in_flight` → refuse → acknowledge,
   claim race, pending dedupe, completion by balance delta, zero-delta buys
@@ -246,9 +232,7 @@ No test contacts a network or a Bloom daemon.
   addressable via `tokens/<address>.json`.
 - **D4** Slippage default 500 bps, accepted 50–5000; quotes expose `impact_pct`.
 - **D5** Launch dev buy default 0, max 140 USDC, staged as approve → createToken.
-- **D6** Writes gated by the USER's runtime setting `tolly_writes = "enabled"`
-  (default disabled; any Bloom user can flip it — it is not a founder gate) plus
-  `MAX_OP_USDC = 250` on buys and on the QUOTED USDC output of sells.
+- **D6** `MAX_OP_USDC = 250` on buys and on the QUOTED USDC output of sells.
 - **D13** Every write leaves a readable trace (`trace.rs`). Bloom delivers
   mounted Petal writes asynchronously and never returns the route's answer
   to the writer, so a refused write persists its outcome: the operation
@@ -259,7 +243,8 @@ No test contacts a network or a Bloom daemon.
   parsed or not. Agents read the marker first (`body_sha256`,
   `record_effect`), then the record it names. The route response is
   unchanged; the successful path stages exactly as before.
-- **D7** Wallet address via `vfs_read("wallets/{wallet}/address")`.
+- **D7** Wallet address via Bloom's canonical account-scoped EVM identity,
+  `vfs_read("wallets/{wallet}/0/address.evm")`.
 - **D8** No logo pinning; the agent supplies a pinned `imageURI`.
 - **D9** `max_fee_per_gas` / `max_priority_fee_per_gas` left `None` (the
   TxEngine sets fees and estimates gas); the `eth_call{from}` pre-flight is
@@ -419,8 +404,7 @@ No test contacts a network or a Bloom daemon.
   check reads instead of scanning records) and `tolly/lastwrite/<wallet>`
   (the last-write marker, D13). All live in the `state` namespace; nothing
   secret is stored.
-- Runtime setting read through `bloom:env`: `tolly_writes` (the write
-  gate). No setting selects a network (D10).
+- No runtime setting selects a network (D10).
 - A fresh Bloom wallet's policy (`wallets/<w>/policy.json`) has empty
   `allowed_destinations` and `allowed_petal_packages`. An empty destination
   set denies every recipient (the plan of a staged entry shows `[Deny]
