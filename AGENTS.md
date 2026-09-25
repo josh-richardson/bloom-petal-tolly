@@ -35,7 +35,7 @@ logged by the daemon and never returned to the writer. A write that
    `next_action`, `changed`, `error_code`, `reconcile_error`; at most 8,
    newest first, `reconcile_truncated: true` when more exist) and persists
    every advance; `recent` shows the post-reconcile state;
-2. if `record` is set, read `wallets/<wallet>/operations/<operationId>.json`:
+2. if `record` is set, read `operations/<operationId>.json`:
    `status`, `error`, `next_action`, `last_write_ms`, and, on a record that
    was already live or terminal, the newest refusals in `refusals[]`.
 
@@ -53,6 +53,10 @@ tell you the wrong story. Only `bloom vfs write <path> --data '...'` returns
 the route's error synchronously (exit 1); the mount does not. Do not treat
 a silent write as a staged transaction.
 
+## Account-scoped routes
+
+Select a wallet and numbered account under `/petals/tolly/wallets/<wallet>/<account>/`. Petal operations and settings live below that directory. Account 0 keeps its existing private records; other accounts have separate stores. The core wallet tree remains `/wallets/<wallet>/<account>/`.
+
 ## Paths
 
 | Path | Read | Write |
@@ -62,11 +66,11 @@ a silent write as a staged transaction.
 | `tokens/<address>.json` | identity, `provenance` (`pad`/`external`), `venues[]` with `execution` support, quote paths. Any lowercase address works, listed or not | — |
 | `quote/<address>/buy/<usdc>.json` | best-execution BUY quote at a USDC size (e.g. `25`, `0.5`) | — |
 | `quote/<address>/sell/<amount>.json` | best-execution SELL quote at a token size | — |
-| `wallets/<wallet>/buy.json` | body schema, limits, `last_write`; reconciles this wallet's in-flight buys against the outbox (`reconciled[]`), then `recent` | BuyRequest |
-| `wallets/<wallet>/sell.json` | body schema, limits, `last_write`; reconciles this wallet's in-flight sells (`reconciled[]`), then `recent` | SellRequest |
-| `wallets/<wallet>/launch.json` | body schema, pad address, limits, `last_write`; reconciles this wallet's in-flight launches (`reconciled[]`), then `recent` | LaunchRequest |
-| `wallets/<wallet>/operations/<operationId>.json` | the stored operation record as is (cached ~5 s; never inspects the outbox — read the route file that staged it first, see `refresh`) | — |
-| `wallets/<wallet>/positions.json` | native + ERC-20 USDC and the tokens this wallet's operations touched | — |
+| `buy.json` | body schema, limits, `last_write`; reconciles this wallet's in-flight buys against the outbox (`reconciled[]`), then `recent` | BuyRequest |
+| `sell.json` | body schema, limits, `last_write`; reconciles this wallet's in-flight sells (`reconciled[]`), then `recent` | SellRequest |
+| `launch.json` | body schema, pad address, limits, `last_write`; reconciles this wallet's in-flight launches (`reconciled[]`), then `recent` | LaunchRequest |
+| `operations/<operationId>.json` | the stored operation record as is (cached ~5 s; never inspects the outbox — read the route file that staged it first, see `refresh`) | — |
+| `positions.json` | native + ERC-20 USDC and the tokens this wallet's operations touched | — |
 
 `<wallet>` is a Bloom wallet id (the directory name under `wallets/` at the
 mount root), never a `0x` address. `<address>` is a lowercase `0x` token
@@ -101,7 +105,7 @@ repeating this, and a staged record carries `cancel_hint`.
 
 ## Bodies (max 4 KiB, unknown fields rejected)
 
-BuyRequest → `wallets/<wallet>/buy.json`
+BuyRequest → `buy.json`
 
 ```json
 { "operationId": "buy-moss-001", "token": "0x…", "amount_usdc": "25",
@@ -116,7 +120,7 @@ BuyRequest → `wallets/<wallet>/buy.json`
   router in the same transaction (`interface_fee.raw` in the quote and
   `plan.interface_fee_raw` in the record). Pad tokens and all sells pay 0.
 
-SellRequest → `wallets/<wallet>/sell.json`
+SellRequest → `sell.json`
 
 ```json
 { "operationId": "sell-moss-001", "token": "0x…", "amount": "1234.5",
@@ -126,7 +130,7 @@ SellRequest → `wallets/<wallet>/sell.json`
 - `amount` is a decimal token amount or `"all"` (the balance is frozen at the
   first stage). Sells are capped by the QUOTED USDC output: ≤ 250 USDC.
 
-LaunchRequest → `wallets/<wallet>/launch.json`
+LaunchRequest → `launch.json`
 
 ```json
 { "operationId": "launch-moss", "name": "Moss Coin", "symbol": "MOSS",
@@ -180,7 +184,7 @@ created ──stage──▶ staged ──owner confirms──▶ broadcast ─�
 | status | meaning | next_action |
 |---|---|---|
 | `created` | id claimed, nothing staged yet | `repost`; `inspect` when `stage_in_flight` is set (see "Unrecorded stage") |
-| `staged` | one entry pending in Bloom's outbox | `confirm_in_bloom` — the owner writes to `confirm_path` (`wallets/<wallet>/chains/arc/outbox/pending/<outbox_id>/confirm`, RELATIVE to the Bloom mount root: prefix the owner's mount point, `~/bloom` by default, never `/bloom`; `confirm_path_note` says so and `cancel_hint` says how to cancel instead) |
+| `staged` | one entry pending in Bloom's outbox | `confirm_in_bloom` — the owner writes to `confirm_path` (`wallets/<wallet>/<account>/chains/arc/outbox/pending/<outbox_id>/confirm`, RELATIVE to the Bloom mount root: prefix the owner's mount point, `~/bloom` by default, never `/bloom`; `confirm_path_note` says so and `cancel_hint` says how to cancel instead) |
 | `broadcast` | sent, no receipt yet | `wait` — read the route file that staged it again (it reconciles), then the record |
 | `confirmed` | mined successfully | step `approve`: `repost` (POST the same body to stage the swap/createToken). step `swap`/`create`: `wait` for completion evidence, gathered by the route file's read |
 | `completed` | domain evidence recorded in `result` | `none` |
@@ -323,7 +327,7 @@ calldata, and two live entries for one intent is the failure this Petal is
 built to prevent.
 
 To proceed: inspect the wallet's outbox in Bloom
-(`wallets/<wallet>/chains/arc/outbox/` under the mount root, `~/bloom` by
+(`wallets/<wallet>/<account>/chains/arc/outbox/` under the mount root, `~/bloom` by
 default), confirm or cancel the entry
 the marker describes, then re-POST the same body with
 `acknowledge_unrecorded_stage: true`. The marker moves to

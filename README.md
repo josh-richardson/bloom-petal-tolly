@@ -12,6 +12,12 @@ Bloom with their passkey. Agent-facing semantics live in
 TOLLY runs on Arc mainnet (chain id 5042, Bloom chain key `arc`). Every
 staged transaction spends real USDC once the owner confirms it.
 
+## Account-scoped routes
+
+Select a wallet and numbered account under `/petals/tolly/wallets/<wallet>/<account>/`. Petal operations and settings live below that directory. Account 0 keeps its existing private records; other accounts have separate stores. The core wallet tree remains `/wallets/<wallet>/<account>/`.
+
+This HD-account release requires a Machine with scoped Petal routing and trusted `bloom.wallet`/`bloom.account` parameters. Installing it early on an older Machine removes Tolly wallet operations from that host. Pin it only with the Machine release that provides those parameters.
+
 ## Quickstart (Bloom owner)
 
 Requires a running Bloom (v0.2.1 or later) with the `arc` chain configured
@@ -21,7 +27,7 @@ and a passkey wallet (`main` below). The mount root is the owner's mount point,
 **1. Install the Petal.** From the release archive:
 
 ```sh
-bloom petals install ./tolly-v0.2.0.petal.tar.gz
+bloom petals install ./tolly-v<next-version>.petal.tar.gz
 ```
 
 The archive and its `SHA256SUMS` are attached to each GitHub release of
@@ -89,14 +95,14 @@ AGENTS.md). Without it, confirming a staged entry fails with
 `POLICY_APPROVAL_REQUIRED` and Bloom auto-stages a packages-only policy
 update of its own.
 
-**4. Trade.** The agent writes a body to `wallets/main/buy.json` (or
+**4. Trade.** The agent writes a body to `petals/tolly/wallets/main/0/buy.json` (or
 `sell.json`, `launch.json`) and reads the same file back (AGENTS.md "Read
 after every write"). Each accepted write stages ONE transaction in the
 outbox; the owner confirms it per transaction with the passkey:
 
 ```sh
 printf 'y\n' > ~/bloom/<confirm_path>       # first write: denied (EACCES) and a ceremony is opened
-cat ~/bloom/wallets/main/chains/arc/outbox/pending/<outbox_id>/ceremony.json   # ceremony_url + expiry
+cat ~/bloom/wallets/main/0/chains/arc/outbox/pending/<outbox_id>/ceremony.json   # ceremony_url + expiry
                                              # open the URL, approve with the passkey (about 10 minutes)
 printf 'y\n' > ~/bloom/<confirm_path>       # second write: broadcast
 ```
@@ -125,7 +131,7 @@ route/src/
   tx.rs swap.rs launch.rs positions.rs wallet.rs   the write/step flows
   host.rs                the only host seam; fake_host.rs under cfg(test)
   route_tests.rs         fake-host tests of every route flow (cfg(test))
-route/files/             21 route files, one component each (see AGENTS.md table)
+route/files/             19 route files, one component each (see AGENTS.md table)
 route/tests/fixtures/    production API captures, calldata golden vectors
 chain/arc.testnet.json   vendored copy of public/testnet.json (digest in constants.rs)
 scripts/                 build.sh, check-route-architecture.sh, generators
@@ -142,7 +148,7 @@ cargo test --manifest-path route/Cargo.toml --locked
 petal build --root .            # or scripts/build.sh (installs the pinned CLI)
 petal check --root .
 wasm-tools component wit petal/tolly/<route>.wasm | grep import
-petal package --root . --out dist/tolly-v0.2.0.petal.tar.gz
+petal package --root . --out dist/tolly-v<next-version>.petal.tar.gz
 bloom petals build . && bloom petals install .    # needs a Bloom daemon
 ```
 
@@ -244,7 +250,7 @@ No test contacts a network or a Bloom daemon.
   `record_effect`), then the record it names. The route response is
   unchanged; the successful path stages exactly as before.
 - **D7** Wallet address via Bloom's canonical account-scoped EVM identity,
-  `vfs_read("wallets/{wallet}/0/address.evm")`.
+  `vfs_read("wallets/{wallet}/{account}/address.evm")`.
 - **D8** No logo pinning; the agent supplies a pinned `imageURI`.
 - **D9** `max_fee_per_gas` / `max_priority_fee_per_gas` left `None` (the
   TxEngine sets fees and estimates gas); the `eth_call{from}` pre-flight is
@@ -272,7 +278,7 @@ No test contacts a network or a Bloom daemon.
   `tx_confirm` from the Petal could change is with
   `acknowledge_warnings = true`, which would bypass simulation. The owner
   confirms by writing to the entry's confirm file, `confirm_path`
-  (`wallets/<wallet>/chains/arc/outbox/pending/<outbox_id>/confirm`,
+  (`wallets/<wallet>/<account>/chains/arc/outbox/pending/<outbox_id>/confirm`,
   RELATIVE to the Bloom mount root, host fact below); `confirm_path_note`
   and `cancel_hint` travel with it on the record.
 - **D14** Reconciliation runs from the READ of the route that staged the
@@ -313,8 +319,8 @@ No test contacts a network or a Bloom daemon.
   route's own spec narrows it at lookup (`bloom-petals/src/runner.rs`
   `petal_route_effective_metadata`), so a parameterized route with a
   non-side-effecting spec renders. Measured on the live daemon (petal
-  v0.1.0): `wallets/main/buy.json` (write spec) stat 1577 bytes, `cat`
-  works; `wallets/main/operations/buy-tolly-1.json` (then `chain_read_spec`)
+  v0.1.0): `petals/tolly/wallets/main/0/buy.json` (write spec) stat 1577 bytes, `cat`
+  works; `petals/tolly/wallets/main/0/operations/buy-tolly-1.json` (then `chain_read_spec`)
   stat 0 / `cat` 0 bytes while `bloom vfs cat` returned 3012 bytes. Hence no
   route uses `chain_read_spec` (enforced by `check-route-architecture.sh`).
 - Outbox inspection is bound to the STAGING ROUTE, not just the package
@@ -323,7 +329,7 @@ No test contacts a network or a Bloom daemon.
   petal_digest = package_hash, route_id = context.route_id }` and answer
   `HostError::Denied("outbox entry was not staged by this trusted Petal")`
   when `entry.staged.resolved_execution_origin() != origin`. `route_id` is
-  the route file, so an entry staged by `wallets/[wallet]/buy.json` can be
+  the route file, so an entry staged by `buy.json` can be
   inspected only from that route's handlers (read or write). Before D14 the
   record's read was always denied and every record degraded to `unknown`
   with "outbox inspection: denied". `tx_inspect` is read-only on the host
@@ -427,7 +433,7 @@ No test contacts a network or a Bloom daemon.
 - Route cache TTLs are the SDK's: quotes `http_read_spec(2_000)` (2 s, a
   pure read), `positions.json` and `operations/[id].json`
   `account_read_spec()` (5 s; the record is a pure store projection, D14),
-  `operations/` listing and `wallets/` the 30 s store default; the writable
+  `operations/` listing the 30 s store default; the writable
   routes (`write_spec`) are uncached, so every read of them reconciles.
 - Wallet ids may contain `/` per the SDK grammar; this Petal additionally
   requires a single safe segment ≤ 64 bytes (store keys).

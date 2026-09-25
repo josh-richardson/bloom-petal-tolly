@@ -23,3 +23,6 @@ paths = ["/health", "/tokens", "/token/*"]
 
 [store]
 namespaces = ["state"]
+
+[account]
+aware = true
